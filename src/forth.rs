@@ -1,9 +1,23 @@
 use std::convert::TryFrom;
 
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum ForthError {
+    #[error("Division by zero!")]
+    DivisionByZero,
+    #[error("Empty stack!")]
+    StackUnderflow,
+    #[error("Unknown word: {0}")]
+    UnknownWord(String),
+    #[error("Invalid word: {0}")]
+    InvalidWord(String),
+    #[error("Unterminated input")]
+    Unterminated,
+}
+
 #[derive(Debug)]
 pub struct Forth {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Lexeme {
     value: String,
 }
@@ -16,13 +30,13 @@ impl Lexeme {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Token {
     Number(f64),
     Operator(ForthOperator),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum ForthOperator {
     Add,
     Subtract,
@@ -31,7 +45,7 @@ enum ForthOperator {
 }
 
 impl TryFrom<&str> for ForthOperator {
-    type Error = String;
+    type Error = ForthError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
@@ -39,7 +53,7 @@ impl TryFrom<&str> for ForthOperator {
             "-" => Ok(Self::Subtract),
             "*" => Ok(Self::Multiply),
             "/" => Ok(Self::Divide),
-            v => Err(format!("Invalid operator: {}", v)),
+            v => Err(ForthError::UnknownWord(v.to_string())),
         }
     }
 }
@@ -51,7 +65,7 @@ impl Forth {
 
     fn debug_state(&self) {}
 
-    pub fn eval(&self, input: &str) -> Result<Option<()>, String> {
+    pub fn eval(&self, input: &str) -> Result<Option<()>, ForthError> {
         let line = input.trim().to_string();
         if line.is_empty() {
             Ok(Some(()))
@@ -61,14 +75,14 @@ impl Forth {
         } else {
             let lexemes = self.lex(&line)?;
             println!("{:?} Ok", lexemes);
-            let tokens = self.tokenize(&lexemes);
+            let tokens = self.tokenize(&lexemes)?;
             println!("{:?} Ok", tokens);
             self.debug_state();
             Ok(Some(()))
         }
     }
 
-    fn lex(&self, input: &str) -> Result<Vec<Lexeme>, String> {
+    fn lex(&self, input: &str) -> Result<Vec<Lexeme>, ForthError> {
         let mut lexemes = Vec::new();
         for item in input.split(' ') {
             lexemes.push(Lexeme::new(item));
@@ -77,7 +91,7 @@ impl Forth {
         Ok(lexemes)
     }
 
-    fn tokenize(&self, input: &[Lexeme]) -> Result<Vec<Token>, String> {
+    fn tokenize(&self, input: &[Lexeme]) -> Result<Vec<Token>, ForthError> {
         let mut tokens = Vec::new();
         for item in input {
             if let Ok(value) = item.value.parse() {
@@ -85,10 +99,50 @@ impl Forth {
             } else if let Ok(operator) = ForthOperator::try_from(item.value.as_ref()) {
                 tokens.push(Token::Operator(operator));
             } else {
-                return Err(format!("not a number: {}", item.value));
+                return Err(ForthError::UnknownWord(item.value.clone()));
             }
         }
 
         Ok(tokens)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn cannot_parse_letter() {
+        let mut forth = Forth::new();
+        let result = forth.eval("1 a 3 4 5");
+        assert_eq!(Err(ForthError::UnknownWord("a".to_string())), result);
+    }
+
+    #[test]
+    fn parses_numbers() {
+        let mut forth = Forth::new();
+        let result = forth.eval("1 2.3 0.3 4 5");
+        assert_eq!(Ok(Some(())), result);
+    }
+
+    #[test]
+    fn parses_math_expressions() {
+        let mut forth = Forth::new();
+        let lexemes = forth.lex("1 2.3 + 0.3 * 4 / 5 -").unwrap();
+        let result = forth.tokenize(&lexemes);
+        assert_eq!(
+            Ok(vec![
+                Token::Number(1.0),
+                Token::Number(2.3),
+                Token::Operator(ForthOperator::Add),
+                Token::Number(0.3),
+                Token::Operator(ForthOperator::Multiply),
+                Token::Number(4.0),
+                Token::Operator(ForthOperator::Divide),
+                Token::Number(5.0),
+                Token::Operator(ForthOperator::Subtract)
+            ]),
+            result
+        );
     }
 }
