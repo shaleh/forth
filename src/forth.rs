@@ -1,4 +1,4 @@
-use std::convert::TryFrom;
+use std::{convert::TryFrom, iter};
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ForthError {
@@ -12,10 +12,9 @@ pub enum ForthError {
     InvalidWord(String),
     #[error("Unterminated input")]
     Unterminated,
+    #[error("Bye")]
+    UserQuit,
 }
-
-#[derive(Debug)]
-pub struct Forth {}
 
 #[derive(Clone, Debug, PartialEq)]
 struct Lexeme {
@@ -34,6 +33,7 @@ impl Lexeme {
 enum Token {
     Number(f64),
     Operator(ForthOperator),
+    Builtin(ForthBuiltin),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,6 +42,13 @@ enum ForthOperator {
     Subtract,
     Multiply,
     Divide,
+}
+
+fn pop1(stack: &mut Vec<f64>) -> Result<f64, ForthError> {
+    match stack.pop() {
+        Some(num) => Ok(num),
+        _ => Err(ForthError::StackUnderflow),
+    }
 }
 
 fn pop2(stack: &mut Vec<f64>) -> Result<(f64, f64), ForthError> {
@@ -89,20 +96,115 @@ impl TryFrom<&str> for ForthOperator {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ForthBuiltin {
+    Bye,
+    Drop,
+    Dup,
+    Emit,
+    Over,
+    Show,
+    Spaces,
+    Swap,
+    Take,
+}
+
+impl ForthBuiltin {
+    pub fn eval(&self, stack: &mut Vec<f64>) -> Result<Option<f64>, ForthError> {
+        match self {
+            Self::Bye => {
+                return Err(ForthError::UserQuit);
+            }
+            Self::Drop => {
+                pop1(stack)?;
+            }
+            Self::Dup => {
+                let value = pop1(stack)?;
+                stack.push(value);
+            }
+            Self::Emit => {
+                let value = pop1(stack)?;
+                print!("{}", value as u8 as char);
+            }
+            Self::Over => {
+                let (num1, num2) = pop2(stack)?;
+                stack.push(num2);
+                stack.push(num1);
+                stack.push(num2);
+            }
+            Self::Show => {
+                show_stack(stack);
+            }
+            Self::Spaces => {
+                let num = pop1(stack)?;
+                println!(
+                    "{}",
+                    iter::repeat(" ")
+                        .take(num as usize)
+                        .intersperse("")
+                        .collect::<String>()
+                );
+            }
+            Self::Swap => {
+                let (value1, value2) = pop2(stack)?;
+                stack.push(value1);
+                stack.push(value2);
+            }
+            Self::Take => {
+                let value = pop1(stack)?;
+                println!("{}", value);
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+impl TryFrom<&str> for ForthBuiltin {
+    type Error = ForthError;
+
+    fn try_from(input: &str) -> Result<ForthBuiltin, Self::Error> {
+        let builtin = match input {
+            "bye" | "quit" => ForthBuiltin::Bye,
+            "dup" => ForthBuiltin::Dup,
+            "drop" => ForthBuiltin::Drop,
+            "emit" => ForthBuiltin::Emit,
+            "over" => ForthBuiltin::Over,
+            ".s" => ForthBuiltin::Show,
+            "spaces" => ForthBuiltin::Spaces,
+            "swap" => ForthBuiltin::Swap,
+            "." | "take" => ForthBuiltin::Take,
+            //"toggle-debug" => ForthBuiltin::ToggleDebug,
+            _ => {
+                return Err(ForthError::UnknownWord(input.into()));
+            }
+        };
+        Ok(builtin)
+    }
+}
+
+fn show_stack(stack: &Vec<f64>) {
+    println!("{:?}", stack);
+}
+
+#[derive(Debug)]
+pub struct Forth {
+    keep_running: bool,
+    stack: Vec<f64>,
+}
+
 impl Forth {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            keep_running: true,
+            stack: Vec::new(),
+        }
     }
 
-    fn debug_state(&self) {}
-
-    pub fn eval(&self, input: &str) -> Result<Option<()>, ForthError> {
+    pub fn eval(&mut self, input: &str) -> Result<Option<()>, ForthError> {
         let line = input.trim().to_string();
         if line.is_empty() {
             Ok(Some(()))
-        } else if line.to_lowercase() == "bye" || line.to_lowercase() == "quit" {
-            self.debug_state();
-            Ok(None)
         } else {
             let lexemes = self.lex(&line)?;
             println!("{:?} Ok", lexemes);
@@ -110,35 +212,38 @@ impl Forth {
             println!("{:?} Ok", tokens);
             let result = self.run(&tokens)?;
             println!("{:?} Ok", result);
-            self.debug_state();
-            Ok(Some(()))
+            if self.keep_running {
+                Ok(Some(()))
+            } else {
+                Ok(None)
+            }
         }
     }
 
-    fn run(&self, tokens: &[Token]) -> Result<Option<f64>, ForthError> {
-        let mut stack = Vec::new();
+    fn run(&mut self, tokens: &[Token]) -> Result<Option<f64>, ForthError> {
         for token in tokens {
             let result = match token {
                 Token::Number(num) => Some(*num),
-                Token::Operator(operator) => operator.eval(&mut stack)?,
+                Token::Operator(operator) => operator.eval(&mut self.stack)?,
+                Token::Builtin(builtin) => builtin.eval(&mut self.stack)?,
             };
             if let Some(num) = result {
-                stack.push(num);
+                self.stack.push(num);
             }
 
-            println!("Stack: {:?}", &stack);
+            println!("Stack: {:?}", self.stack);
         }
 
-        match stack.last() {
+        match self.stack.last() {
             Some(num) => Ok(Some(*num)),
-            None => Err(ForthError::StackUnderflow),
+            None => Ok(None),
         }
     }
 
     fn lex(&self, input: &str) -> Result<Vec<Lexeme>, ForthError> {
         let mut lexemes = Vec::new();
         for item in input.split(' ') {
-            lexemes.push(Lexeme::new(item));
+            lexemes.push(Lexeme::new(&item.to_lowercase()));
         }
 
         Ok(lexemes)
@@ -151,6 +256,8 @@ impl Forth {
                 tokens.push(Token::Number(value));
             } else if let Ok(operator) = ForthOperator::try_from(item.value.as_ref()) {
                 tokens.push(Token::Operator(operator));
+            } else if let Ok(builtin) = ForthBuiltin::try_from(item.value.as_ref()) {
+                tokens.push(Token::Builtin(builtin));
             } else {
                 return Err(ForthError::UnknownWord(item.value.clone()));
             }

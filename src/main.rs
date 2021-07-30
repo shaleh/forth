@@ -4,7 +4,7 @@ use std::io::{self, Write};
 
 mod forth;
 
-use forth::Forth;
+use forth::{Forth, ForthError};
 
 fn main() {
     let mut forth = Forth::new();
@@ -24,6 +24,9 @@ fn main() {
                     break;
                 }
                 Ok(Some(())) => {}
+                Err(ForthError::UserQuit) => {
+                    break;
+                }
                 Err(msg) => {
                     println!("Error: {}", msg);
                 }
