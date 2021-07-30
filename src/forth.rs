@@ -44,6 +44,37 @@ enum ForthOperator {
     Divide,
 }
 
+fn pop2(stack: &mut Vec<f64>) -> Result<(f64, f64), ForthError> {
+    match (stack.pop(), stack.pop()) {
+        (Some(v1), Some(v2)) => Ok((v1, v2)),
+        _ => Err(ForthError::StackUnderflow),
+    }
+}
+
+impl ForthOperator {
+    pub fn eval(&self, stack: &mut Vec<f64>) -> Result<Option<f64>, ForthError> {
+        let result = match self {
+            Self::Add => {
+                let (op1, op2) = pop2(stack)?;
+                op2 + op1
+            }
+            Self::Subtract => {
+                let (op1, op2) = pop2(stack)?;
+                op2 - op1
+            }
+            Self::Multiply => {
+                let (op1, op2) = pop2(stack)?;
+                op2 * op1
+            }
+            Self::Divide => {
+                let (op1, op2) = pop2(stack)?;
+                op2 / op1
+            }
+        };
+        Ok(Some(result))
+    }
+}
+
 impl TryFrom<&str> for ForthOperator {
     type Error = ForthError;
 
@@ -77,8 +108,30 @@ impl Forth {
             println!("{:?} Ok", lexemes);
             let tokens = self.tokenize(&lexemes)?;
             println!("{:?} Ok", tokens);
+            let result = self.run(&tokens)?;
+            println!("{:?} Ok", result);
             self.debug_state();
             Ok(Some(()))
+        }
+    }
+
+    fn run(&self, tokens: &[Token]) -> Result<Option<f64>, ForthError> {
+        let mut stack = Vec::new();
+        for token in tokens {
+            let result = match token {
+                Token::Number(num) => Some(*num),
+                Token::Operator(operator) => operator.eval(&mut stack)?,
+            };
+            if let Some(num) = result {
+                stack.push(num);
+            }
+
+            println!("Stack: {:?}", &stack);
+        }
+
+        match stack.last() {
+            Some(num) => Ok(Some(*num)),
+            None => Err(ForthError::StackUnderflow),
         }
     }
 
@@ -144,5 +197,14 @@ mod test {
             ]),
             result
         );
+    }
+
+    #[test]
+    fn simple_addition_works() {
+        let mut forth = Forth::new();
+        let lexemes = forth.lex("5 6 +").unwrap();
+        let tokens = forth.tokenize(&lexemes).unwrap();
+        let result = forth.run(&tokens).unwrap();
+        assert_eq!(Some(11.0), result);
     }
 }
