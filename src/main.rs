@@ -16,14 +16,18 @@ fn main() {
         io::stdout().flush().unwrap();
 
         match io::stdin().read_line(&mut input) {
-            Ok(count) if count == 0 => {
+            Ok(0) => {
                 break;
             }
             Ok(_) => match forth.eval(&input) {
-                Ok(None) => {
-                    break;
-                }
-                Ok(Some(())) => {}
+                Ok(result) => match result {
+                    Some(value) => {
+                        println!("{} Ok", value);
+                    }
+                    None => {
+                        println!("Ok");
+                    }
+                },
                 Err(ForthError::UserQuit) => {
                     break;
                 }

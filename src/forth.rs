@@ -4,7 +4,7 @@ use std::{collections::HashMap, convert::TryFrom, iter};
 pub enum ForthError {
     #[error("Division by zero!")]
     DivisionByZero,
-    #[error("Empty stack!")]
+    #[error("Stack underflow!")]
     StackUnderflow,
     #[error("Unknown word: {0}")]
     UnknownWord(String),
@@ -315,14 +315,12 @@ impl State {
 
 #[derive(Debug)]
 pub struct Forth {
-    keep_running: bool,
     state: State,
 }
 
 impl Forth {
     pub fn new() -> Self {
         Self {
-            keep_running: true,
             state: State::new(),
         }
     }
@@ -332,19 +330,16 @@ impl Forth {
         &self.state.stack
     }
 
-    pub fn eval(&mut self, input: &str) -> Result<Option<()>, ForthError> {
+    pub fn eval(&mut self, input: &str) -> Result<Option<f64>, ForthError> {
         let line = input.trim().to_string();
         if line.is_empty() {
-            Ok(Some(()))
+            Ok(None)
         } else {
             let lexemes = self.lex(&line)?;
             let tokens = self.tokenize(&lexemes)?;
-            let _result = self.run(&tokens)?;
-            if self.keep_running {
-                Ok(Some(()))
-            } else {
-                Ok(None)
-            }
+            let result = self.run(&tokens)?;
+
+            Ok(result)
         }
     }
 
