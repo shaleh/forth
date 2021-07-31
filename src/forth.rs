@@ -297,7 +297,7 @@ impl State {
     fn pop(&mut self) -> Result<f64, ForthError> {
         match self.stack.pop() {
             Some(num) => Ok(num),
-            _ => Err(ForthError::StackUnderflow),
+            None => Err(ForthError::StackUnderflow),
         }
     }
 
@@ -377,11 +377,13 @@ impl Forth {
         let mut in_user_defined = false;
 
         for item in input {
-            let token = if let Ok(value) = item.value.parse() {
-                Token::Number(value)
-            } else if item.value == ":" {
+            if item.value == ":" {
                 in_user_defined = true;
                 continue;
+            }
+
+            let token = if let Ok(value) = item.value.parse() {
+                Token::Number(value)
             } else if item.value == ";" {
                 in_user_defined = false;
                 Token::UserDefined(user_defined.clone())
