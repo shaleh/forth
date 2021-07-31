@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, iter};
+use std::{collections::HashMap, convert::TryFrom, iter};
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ForthError {
@@ -29,11 +29,59 @@ impl Lexeme {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Token {
     Number(f64),
     Operator(ForthOperator),
     Builtin(ForthBuiltin),
+    Word(String),
+    Definition(Vec<Token>),
+    UserDefined(Vec<Token>),
+}
+
+impl Token {
+    pub fn eval(&self, state: &mut State) -> Result<Option<f64>, ForthError> {
+        let result = match self {
+            Token::Number(num) => Some(*num),
+            Token::Operator(operator) => operator.eval(state)?,
+            Token::Builtin(builtin) => builtin.eval(state)?,
+            Token::Word(word) => match state.lookup(word) {
+                Some(Token::Number(value)) => Some(value),
+                Some(Token::Definition(user_defined_tokens)) => {
+                    let mut result = None;
+                    for token in user_defined_tokens {
+                        result = token.eval(state)?;
+                    }
+                    result
+                }
+                Some(stored_token) => {
+                    return Err(ForthError::InvalidWord(format!("{:?}", stored_token)));
+                }
+                None => {
+                    return Err(ForthError::UnknownWord(word.clone()));
+                }
+            },
+            Token::UserDefined(user_defined_tokens) => match user_defined_tokens.as_slice() {
+                [Token::Word(name), rest @ ..] => {
+                    state.define_word(name.clone(), Token::Definition(rest.to_vec()));
+                    None
+                }
+                _ => {
+                    return Err(ForthError::InvalidWord(format!(
+                        "{:?}",
+                        user_defined_tokens
+                    )));
+                }
+            },
+            Token::Definition(user_defined_tokens) => {
+                return Err(ForthError::InvalidWord(format!(
+                    "{:?}",
+                    user_defined_tokens
+                )));
+            }
+        };
+        Ok(result)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -44,37 +92,26 @@ enum ForthOperator {
     Divide,
 }
 
-fn pop1(stack: &mut Vec<f64>) -> Result<f64, ForthError> {
-    match stack.pop() {
-        Some(num) => Ok(num),
-        _ => Err(ForthError::StackUnderflow),
-    }
-}
-
-fn pop2(stack: &mut Vec<f64>) -> Result<(f64, f64), ForthError> {
-    match (stack.pop(), stack.pop()) {
-        (Some(v1), Some(v2)) => Ok((v1, v2)),
-        _ => Err(ForthError::StackUnderflow),
-    }
-}
-
 impl ForthOperator {
-    pub fn eval(&self, stack: &mut Vec<f64>) -> Result<Option<f64>, ForthError> {
+    pub fn eval(&self, state: &mut State) -> Result<Option<f64>, ForthError> {
         let result = match self {
             Self::Add => {
-                let (op1, op2) = pop2(stack)?;
+                let (op1, op2) = state.pop2()?;
                 op2 + op1
             }
             Self::Subtract => {
-                let (op1, op2) = pop2(stack)?;
+                let (op1, op2) = state.pop2()?;
                 op2 - op1
             }
             Self::Multiply => {
-                let (op1, op2) = pop2(stack)?;
+                let (op1, op2) = state.pop2()?;
                 op2 * op1
             }
             Self::Divide => {
-                let (op1, op2) = pop2(stack)?;
+                let (op1, op2) = state.pop2()?;
+                if op1 == 0 {
+                    return Err(ForthError::DivisionByZero);
+                }
                 op2 / op1
             }
         };
@@ -110,34 +147,34 @@ enum ForthBuiltin {
 }
 
 impl ForthBuiltin {
-    pub fn eval(&self, stack: &mut Vec<f64>) -> Result<Option<f64>, ForthError> {
+    pub fn eval(&self, state: &mut State) -> Result<Option<f64>, ForthError> {
         match self {
             Self::Bye => {
                 return Err(ForthError::UserQuit);
             }
             Self::Drop => {
-                pop1(stack)?;
+                state.pop()?;
             }
             Self::Dup => {
-                let value = pop1(stack)?;
-                stack.push(value);
+                let value = state.top()?;
+                state.push(value);
             }
             Self::Emit => {
-                let value = pop1(stack)?;
+                let value = state.pop()?;
                 print!("{}", value as u8 as char);
             }
             Self::Over => {
-                let (num1, num2) = pop2(stack)?;
-                stack.push(num2);
-                stack.push(num1);
-                stack.push(num2);
+                let (num1, num2) = state.pop2()?;
+                state.push(num2);
+                state.push(num1);
+                state.push(num2);
             }
             Self::Show => {
-                show_stack(stack);
+                state.show_stack();
             }
             Self::Spaces => {
-                let num = pop1(stack)?;
-                println!(
+                let num = state.pop()?;
+                print!(
                     "{}",
                     iter::repeat(" ")
                         .take(num as usize)
@@ -146,13 +183,13 @@ impl ForthBuiltin {
                 );
             }
             Self::Swap => {
-                let (value1, value2) = pop2(stack)?;
-                stack.push(value1);
-                stack.push(value2);
+                let (value1, value2) = state.pop2()?;
+                state.push(value1);
+                state.push(value2);
             }
             Self::Take => {
-                let value = pop1(stack)?;
-                println!("{}", value);
+                let value = state.pop()?;
+                print!("{}", value);
             }
         }
 
@@ -183,21 +220,69 @@ impl TryFrom<&str> for ForthBuiltin {
     }
 }
 
-fn show_stack(stack: &Vec<f64>) {
-    println!("{:?}", stack);
+#[derive(Debug)]
+pub struct State {
+    dictionary: HashMap<String, Token>,
+    stack: Vec<f64>,
+}
+
+impl State {
+    fn new() -> Self {
+        Self {
+            dictionary: HashMap::new(),
+            stack: Vec::new(),
+        }
+    }
+
+    fn define_word(&mut self, word: String, value: Token) {
+        self.dictionary.insert(word, value);
+    }
+
+    fn lookup(&self, word: &str) -> Option<Token> {
+        self.dictionary.get(word).map(|token| token.clone())
+    }
+
+    fn top(&self) -> Result<f64, ForthError> {
+        match self.stack.last() {
+            Some(value) => Ok(*value),
+            None => Err(ForthError::StackUnderflow),
+        }
+    }
+
+    fn push(&mut self, value: f64) {
+        self.stack.push(value);
+    }
+
+    fn pop(&mut self) -> Result<f64, ForthError> {
+        match self.stack.pop() {
+            Some(num) => Ok(num),
+            _ => Err(ForthError::StackUnderflow),
+        }
+    }
+
+    fn pop2(&mut self) -> Result<(f64, f64), ForthError> {
+        match (self.stack.pop(), self.stack.pop()) {
+            (Some(v1), Some(v2)) => Ok((v1, v2)),
+            _ => Err(ForthError::StackUnderflow),
+        }
+    }
+
+    fn show_stack(&self) {
+        println!("{:?}", self.stack);
+    }
 }
 
 #[derive(Debug)]
 pub struct Forth {
     keep_running: bool,
-    stack: Vec<f64>,
+    state: State,
 }
 
 impl Forth {
     pub fn new() -> Self {
         Self {
             keep_running: true,
-            stack: Vec::new(),
+            state: State::new(),
         }
     }
 
@@ -207,11 +292,11 @@ impl Forth {
             Ok(Some(()))
         } else {
             let lexemes = self.lex(&line)?;
-            println!("{:?} Ok", lexemes);
+            //println!("{:?} Ok", lexemes);
             let tokens = self.tokenize(&lexemes)?;
-            println!("{:?} Ok", tokens);
-            let result = self.run(&tokens)?;
-            println!("{:?} Ok", result);
+            //println!("{:?} Ok", tokens);
+            let _result = self.run(&tokens)?;
+            //println!("{:?} Ok", _result);
             if self.keep_running {
                 Ok(Some(()))
             } else {
@@ -221,23 +306,18 @@ impl Forth {
     }
 
     fn run(&mut self, tokens: &[Token]) -> Result<Option<f64>, ForthError> {
+        let mut result = None;
+
         for token in tokens {
-            let result = match token {
-                Token::Number(num) => Some(*num),
-                Token::Operator(operator) => operator.eval(&mut self.stack)?,
-                Token::Builtin(builtin) => builtin.eval(&mut self.stack)?,
-            };
+            result = token.eval(&mut self.state)?;
             if let Some(num) = result {
-                self.stack.push(num);
+                self.state.push(num);
             }
 
-            println!("Stack: {:?}", self.stack);
+            //self.state.show_stack();
         }
 
-        match self.stack.last() {
-            Some(num) => Ok(Some(*num)),
-            None => Ok(None),
-        }
+        Ok(result)
     }
 
     fn lex(&self, input: &str) -> Result<Vec<Lexeme>, ForthError> {
@@ -251,15 +331,36 @@ impl Forth {
 
     fn tokenize(&self, input: &[Lexeme]) -> Result<Vec<Token>, ForthError> {
         let mut tokens = Vec::new();
+
+        let mut user_defined = Vec::new();
+        let mut in_user_defined = false;
+
         for item in input {
-            if let Ok(value) = item.value.parse() {
-                tokens.push(Token::Number(value));
+            if in_user_defined == false && !user_defined.is_empty() {
+                return Err(ForthError::InvalidWord(item.value.clone()));
+            }
+            let token = if let Ok(value) = item.value.parse() {
+                Token::Number(value)
             } else if let Ok(operator) = ForthOperator::try_from(item.value.as_ref()) {
-                tokens.push(Token::Operator(operator));
+                Token::Operator(operator)
             } else if let Ok(builtin) = ForthBuiltin::try_from(item.value.as_ref()) {
-                tokens.push(Token::Builtin(builtin));
+                Token::Builtin(builtin)
+            } else if item.value == ":" {
+                //println!("Start custom");
+                in_user_defined = true;
+                continue;
+            } else if item.value == ";" {
+                in_user_defined = false;
+                //println!("Custom {:?}", user_defined);
+                Token::UserDefined(user_defined.clone())
             } else {
-                return Err(ForthError::UnknownWord(item.value.clone()));
+                Token::Word(item.value.clone())
+            };
+            if in_user_defined {
+                //println!("Pushing {:?}", token);
+                user_defined.push(token);
+            } else {
+                tokens.push(token);
             }
         }
 
