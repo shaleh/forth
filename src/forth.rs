@@ -137,24 +137,28 @@ enum ForthOperator {
 impl ForthOperator {
     pub fn eval(&self, state: &mut State) -> Result<Option<f64>, ForthError> {
         let result = match self {
+            // (n1 n2 -- sum)
             Self::Add => {
-                let (op1, op2) = state.pop2()?;
-                op2 + op1
+                let (n2, n1) = state.pop2()?;
+                n1 + n2
             }
             Self::Subtract => {
-                let (op1, op2) = state.pop2()?;
-                op2 - op1
+                // (n1 n2 -- difference)
+                let (n2, n1) = state.pop2()?;
+                n1 - n2
             }
             Self::Multiply => {
-                let (op1, op2) = state.pop2()?;
-                op2 * op1
+                // (n1 n2 -- result)
+                let (n2, n1) = state.pop2()?;
+                n1 * n2
             }
             Self::Divide => {
-                let (op1, op2) = state.pop2()?;
-                if op1 == 0.0 {
+                // (n1 n2 -- result)
+                let (n2, n1) = state.pop2()?;
+                if n2 == 0.0 {
                     return Err(ForthError::DivisionByZero);
                 }
-                op2 / op1
+                n1 / n2
             }
         };
         Ok(Some(result))
@@ -200,21 +204,25 @@ impl ForthBuiltin {
                 println!();
             }
             Self::Drop => {
+                // (n1 -- )
                 state.pop()?;
             }
             Self::Dup => {
+                // (n1 -- n1 n1)
                 let value = state.top()?;
                 state.push(value);
             }
             Self::Emit => {
+                // (n1 -- )
                 let value = state.pop()?;
                 print!("{}", value as u8 as char);
             }
             Self::Over => {
-                let (num1, num2) = state.pop2()?;
-                state.push(num2);
+                // (n1 n2 -- n1 n2 n1)
+                let (num2, num1) = state.pop2()?;
                 state.push(num1);
                 state.push(num2);
+                state.push(num1);
             }
             Self::Rot => {
                 // (n1 n2 n3 -- n2 n3 n1)
@@ -228,6 +236,7 @@ impl ForthBuiltin {
                 state.show_stack();
             }
             Self::Spaces => {
+                // (n1 -- )
                 let num = state.pop()?;
                 print!(
                     "{}",
@@ -238,11 +247,13 @@ impl ForthBuiltin {
                 );
             }
             Self::Swap => {
-                let (value1, value2) = state.pop2()?;
-                state.push(value1);
-                state.push(value2);
+                // (n1 n2 -- n2 n1)
+                let (n2, n1) = state.pop2()?;
+                state.push(n2);
+                state.push(n1);
             }
             Self::Take => {
+                // (n1 -- )
                 let value = state.pop()?;
                 print!("{}", value);
             }
