@@ -178,10 +178,12 @@ impl TryFrom<&str> for ForthOperator {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum ForthBuiltin {
     Bye,
+    CR,
     Drop,
     Dup,
     Emit,
     Over,
+    Rot,
     Show,
     Spaces,
     Swap,
@@ -193,6 +195,9 @@ impl ForthBuiltin {
         match self {
             Self::Bye => {
                 return Err(ForthError::UserQuit);
+            }
+            Self::CR => {
+                println!();
             }
             Self::Drop => {
                 state.pop()?;
@@ -210,6 +215,14 @@ impl ForthBuiltin {
                 state.push(num2);
                 state.push(num1);
                 state.push(num2);
+            }
+            Self::Rot => {
+                // (n1 n2 n3 -- n2 n3 n1)
+                let (num3, num2) = state.pop2()?;
+                let num1 = state.pop()?;
+                state.push(num2);
+                state.push(num3);
+                state.push(num1);
             }
             Self::Show => {
                 state.show_stack();
@@ -245,10 +258,12 @@ impl TryFrom<&str> for ForthBuiltin {
     fn try_from(input: &str) -> Result<ForthBuiltin, Self::Error> {
         let builtin = match input {
             "bye" | "quit" => ForthBuiltin::Bye,
+            "cr" => ForthBuiltin::CR,
             "dup" => ForthBuiltin::Dup,
             "drop" => ForthBuiltin::Drop,
             "emit" => ForthBuiltin::Emit,
             "over" => ForthBuiltin::Over,
+            "rot" => ForthBuiltin::Rot,
             ".s" => ForthBuiltin::Show,
             "spaces" => ForthBuiltin::Spaces,
             "swap" => ForthBuiltin::Swap,
@@ -419,7 +434,7 @@ mod test {
     #[test]
     fn parses_numbers() {
         let mut forth = Forth::new();
-        assert_eq!(forth.eval("1 2.3 0.3 4 5"), Ok(Some(())));
+        assert_eq!(forth.eval("1 2.3 0.3 4 5"), Ok(Some(5.0)));
     }
 
     #[test]
@@ -455,21 +470,21 @@ mod test {
     #[test]
     fn dup() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 dup"), Ok(Some(())));
+        assert_eq!(f.eval("1 dup"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 1.0],);
     }
 
     #[test]
     fn dup_top_value_only() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 2 dup"), Ok(Some(())));
+        assert_eq!(f.eval("1 2 dup"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 2.0, 2.0]);
     }
 
     #[test]
     fn dup_case_insensitive() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 DUP Dup dup"), Ok(Some(())));
+        assert_eq!(f.eval("1 DUP Dup dup"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 1.0, 1.0, 1.0]);
     }
 
@@ -480,23 +495,43 @@ mod test {
     }
 
     #[test]
+    fn rot() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 3 rot"), Ok(None));
+        assert_eq!(f.stack(), vec![2.0, 3.0, 1.0]);
+    }
+
+    #[test]
+    fn rot_case_insensitive() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 3 ROT Rot rot"), Ok(None));
+        assert_eq!(f.stack(), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn rot_error() {
+        let mut f = Forth::new();
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("rot"));
+    }
+
+    #[test]
     fn drop() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 drop"), Ok(Some(())));
+        assert_eq!(f.eval("1 drop"), Ok(None));
         assert_eq!(Vec::<f64>::new(), f.stack());
     }
 
     #[test]
     fn drop_with_two() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 2 drop"), Ok(Some(())));
+        assert_eq!(f.eval("1 2 drop"), Ok(None));
         assert_eq!(f.stack(), vec![1.0]);
     }
 
     #[test]
     fn drop_case_insensitive() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 2 3 4 DROP Drop drop"), Ok(Some(())));
+        assert_eq!(f.eval("1 2 3 4 DROP Drop drop"), Ok(None));
         assert_eq!(f.stack(), vec![1.0]);
     }
 
@@ -509,21 +544,21 @@ mod test {
     #[test]
     fn swap() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 2 swap"), Ok(Some(())));
+        assert_eq!(f.eval("1 2 swap"), Ok(None));
         assert_eq!(f.stack(), vec![2.0, 1.0]);
     }
 
     #[test]
     fn swap_with_three() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 2 3 swap"), Ok(Some(())));
+        assert_eq!(f.eval("1 2 3 swap"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 3.0, 2.0]);
     }
 
     #[test]
     fn swap_case_insensitive() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 2 SWAP 3 Swap 4 swap"), Ok(Some(())));
+        assert_eq!(f.eval("1 2 SWAP 3 Swap 4 swap"), Ok(None));
         assert_eq!(f.stack(), vec![2.0, 3.0, 4.0, 1.0]);
     }
 
@@ -537,21 +572,21 @@ mod test {
     #[test]
     fn over() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 2 over"), Ok(Some(())));
+        assert_eq!(f.eval("1 2 over"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 2.0, 1.0]);
     }
 
     #[test]
     fn over_with_three() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 2 3 over"), Ok(Some(())));
+        assert_eq!(f.eval("1 2 3 over"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 2.0, 3.0, 2.0]);
     }
 
     #[test]
     fn over_case_insensitive() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 2 OVER Over over"), Ok(Some(())));
+        assert_eq!(f.eval("1 2 OVER Over over"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 2.0, 1.0, 2.0, 1.0]);
     }
 
@@ -567,84 +602,84 @@ mod test {
     #[test]
     fn can_consist_of_built_in_words() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": dup-twice dup dup ;"), Ok(Some(())));
-        assert_eq!(f.eval("1 dup-twice"), Ok(Some(())));
+        assert_eq!(f.eval(": dup-twice dup dup ;"), Ok(None));
+        assert_eq!(f.eval("1 dup-twice"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 1.0, 1.0]);
     }
 
     #[test]
     fn execute_in_the_right_order() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": countup 1 2 3 ;"), Ok(Some(())));
-        assert_eq!(f.eval("countup"), Ok(Some(())));
+        assert_eq!(f.eval(": countup 1 2 3 ;"), Ok(None));
+        assert_eq!(f.eval("countup"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 2.0, 3.0]);
     }
 
     #[test]
     fn redefining_an_existing_word() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": foo dup ;"), Ok(Some(())));
-        assert_eq!(f.eval(": foo dup dup ;"), Ok(Some(())));
-        assert_eq!(f.eval("1 foo"), Ok(Some(())));
+        assert_eq!(f.eval(": foo dup ;"), Ok(None));
+        assert_eq!(f.eval(": foo dup dup ;"), Ok(None));
+        assert_eq!(f.eval("1 foo"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 1.0, 1.0]);
     }
 
     #[test]
     fn redefining_an_existing_built_in_word() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": swap dup ;"), Ok(Some(())));
-        assert_eq!(f.eval("1 swap"), Ok(Some(())));
+        assert_eq!(f.eval(": swap dup ;"), Ok(None));
+        assert_eq!(f.eval("1 swap"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 1.0]);
     }
 
     #[test]
     fn user_defined_words_are_case_insensitive() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": foo dup ;"), Ok(Some(())));
-        assert_eq!(f.eval("1 FOO Foo foo"), Ok(Some(())));
+        assert_eq!(f.eval(": foo dup ;"), Ok(None));
+        assert_eq!(f.eval("1 FOO Foo foo"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 1.0, 1.0, 1.0]);
     }
 
     #[test]
     fn definitions_are_case_insensitive() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": SWAP DUP Dup dup ;"), Ok(Some(())));
-        assert_eq!(f.eval("1 swap"), Ok(Some(())));
+        assert_eq!(f.eval(": SWAP DUP Dup dup ;"), Ok(None));
+        assert_eq!(f.eval("1 swap"), Ok(None));
         assert_eq!(f.stack(), vec![1.0, 1.0, 1.0, 1.0]);
     }
 
     #[test]
     fn redefining_a_built_in_operator() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": + * ;"), Ok(Some(())));
-        assert_eq!(f.eval("3 4 +"), Ok(Some(())));
+        assert_eq!(f.eval(": + * ;"), Ok(None));
+        assert_eq!(f.eval("3 4 +"), Ok(None));
         assert_eq!(f.stack(), vec![12.0]);
     }
 
     #[test]
     fn can_define_variable() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": foo 5 ;"), Ok(Some(())));
-        assert_eq!(f.eval("foo"), Ok(Some(())));
+        assert_eq!(f.eval(": foo 5 ;"), Ok(None));
+        assert_eq!(f.eval("foo"), Ok(None));
         assert_eq!(f.stack(), vec![5.0]);
     }
 
     #[test]
     fn can_use_different_words_with_the_same_name() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": foo 5 ;"), Ok(Some(())));
-        assert_eq!(f.eval(": bar foo ;"), Ok(Some(())));
-        assert_eq!(f.eval(": foo 6 ;"), Ok(Some(())));
-        assert_eq!(f.eval("bar foo"), Ok(Some(())));
+        assert_eq!(f.eval(": foo 5 ;"), Ok(None));
+        assert_eq!(f.eval(": bar foo ;"), Ok(None));
+        assert_eq!(f.eval(": foo 6 ;"), Ok(None));
+        assert_eq!(f.eval("bar foo"), Ok(None));
         assert_eq!(f.stack(), vec![5.0, 6.0]);
     }
 
     #[test]
     fn can_define_word_that_uses_word_with_the_same_name() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": foo 10 ;"), Ok(Some(())));
-        assert_eq!(f.eval(": foo foo 1 + ;"), Ok(Some(())));
-        assert_eq!(f.eval("foo"), Ok(Some(())));
+        assert_eq!(f.eval(": foo 10 ;"), Ok(None));
+        assert_eq!(f.eval(": foo foo 1 + ;"), Ok(None));
+        assert_eq!(f.eval("foo"), Ok(None));
         assert_eq!(f.stack(), vec![11.0]);
     }
 
@@ -675,25 +710,25 @@ mod test {
     #[test]
     fn multiple_definitions() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": one 1 ; : two 2 ; one two +"), Ok(Some(())));
+        assert_eq!(f.eval(": one 1 ; : two 2 ; one two +"), Ok(Some(3.0)));
         assert_eq!(f.stack(), vec![3.0]);
     }
 
     #[test]
     fn definitions_after_ops() {
         let mut f = Forth::new();
-        assert_eq!(f.eval("1 2 + : addone 1 + ; addone"), Ok(Some(())));
+        assert_eq!(f.eval("1 2 + : addone 1 + ; addone"), Ok(None));
         assert_eq!(f.stack(), vec![4.0]);
     }
 
     #[test]
     fn redefine_an_existing_word_with_another_existing_word() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": foo 5 ;"), Ok(Some(())));
-        assert_eq!(f.eval(": bar foo ;"), Ok(Some(())));
-        assert_eq!(f.eval(": foo 6 ;"), Ok(Some(())));
-        assert_eq!(f.eval(": bar foo ;"), Ok(Some(())));
-        assert_eq!(f.eval("bar foo"), Ok(Some(())));
+        assert_eq!(f.eval(": foo 5 ;"), Ok(None));
+        assert_eq!(f.eval(": bar foo ;"), Ok(None));
+        assert_eq!(f.eval(": foo 6 ;"), Ok(None));
+        assert_eq!(f.eval(": bar foo ;"), Ok(None));
+        assert_eq!(f.eval("bar foo"), Ok(None));
         assert_eq!(f.stack(), vec![6.0, 6.0]);
     }
 }
