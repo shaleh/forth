@@ -48,39 +48,83 @@ impl Token {
             Token::Word(word) => match state.lookup(word) {
                 Some(Token::Number(value)) => Some(value),
                 Some(Token::Definition(user_defined_tokens)) => {
-                    let mut result = None;
-                    for token in user_defined_tokens {
-                        result = token.eval(state)?;
-                    }
-                    result
+                    dbg!(&user_defined_tokens);
+                    self.eval_definition(state, &user_defined_tokens)?
                 }
                 Some(stored_token) => {
+                    dbg!("Stored token: {:?}", &stored_token);
                     return Err(ForthError::InvalidWord(format!("{:?}", stored_token)));
                 }
                 None => {
-                    return Err(ForthError::UnknownWord(word.clone()));
+                    let parsed = self.parse_word(word.as_ref())?;
+                    parsed.eval(state)?
                 }
             },
-            Token::UserDefined(user_defined_tokens) => match user_defined_tokens.as_slice() {
-                [Token::Word(name), rest @ ..] => {
-                    state.define_word(name.clone(), Token::Definition(rest.to_vec()));
-                    None
+            Token::UserDefined(user_defined_tokens) => {
+                dbg!(&user_defined_tokens);
+                match user_defined_tokens.as_slice() {
+                    [Token::Word(name), rest @ ..] => match rest
+                        .iter()
+                        .map(|token| self.lookup_definition(state, token.clone()))
+                        .collect()
+                    {
+                        Ok(collected_tokens) => {
+                            state.define_word(name.clone(), Token::Definition(collected_tokens));
+                            None
+                        }
+                        Err(err) => {
+                            return Err(err);
+                        }
+                    },
+                    _ => {
+                        dbg!("User definition: {:?}", &user_defined_tokens);
+                        return Err(ForthError::InvalidWord(format!(
+                            "{:?}",
+                            user_defined_tokens
+                        )));
+                    }
                 }
-                _ => {
-                    return Err(ForthError::InvalidWord(format!(
-                        "{:?}",
-                        user_defined_tokens
-                    )));
-                }
-            },
+            }
             Token::Definition(user_defined_tokens) => {
-                return Err(ForthError::InvalidWord(format!(
-                    "{:?}",
-                    user_defined_tokens
-                )));
+                self.eval_definition(state, user_defined_tokens)?
             }
         };
         Ok(result)
+    }
+
+    fn parse_word(&self, word: &str) -> Result<Token, ForthError> {
+        if let Ok(builtin) = ForthBuiltin::try_from(word) {
+            Ok(Token::Builtin(builtin))
+        } else if let Ok(operator) = ForthOperator::try_from(word) {
+            Ok(Token::Operator(operator))
+        } else {
+            Err(ForthError::UnknownWord(word.to_string()))
+        }
+    }
+
+    fn lookup_definition(&self, state: &State, token: Token) -> Result<Token, ForthError> {
+        let definition = match token {
+            Token::Word(word) => match state.lookup(&word) {
+                Some(value) => value,
+                None => self.parse_word(word.as_ref())?,
+            },
+            _ => token,
+        };
+        Ok(definition)
+    }
+
+    fn eval_definition(
+        &self,
+        state: &mut State,
+        tokens: &[Token],
+    ) -> Result<Option<f64>, ForthError> {
+        for token in tokens {
+            dbg!("Eval definition {:?}", &token);
+            if let Some(value) = token.eval(state)? {
+                state.push(value);
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -109,7 +153,7 @@ impl ForthOperator {
             }
             Self::Divide => {
                 let (op1, op2) = state.pop2()?;
-                if op1 == 0 {
+                if op1 == 0.0 {
                     return Err(ForthError::DivisionByZero);
                 }
                 op2 / op1
@@ -213,6 +257,7 @@ impl TryFrom<&str> for ForthBuiltin {
             "." | "take" => ForthBuiltin::Take,
             //"toggle-debug" => ForthBuiltin::ToggleDebug,
             _ => {
+                dbg!("parse builtin {:?}", input);
                 return Err(ForthError::UnknownWord(input.into()));
             }
         };
@@ -286,6 +331,10 @@ impl Forth {
         }
     }
 
+    pub fn stack(&self) -> &[f64] {
+        &self.state.stack
+    }
+
     pub fn eval(&mut self, input: &str) -> Result<Option<()>, ForthError> {
         let line = input.trim().to_string();
         if line.is_empty() {
@@ -309,6 +358,7 @@ impl Forth {
         let mut result = None;
 
         for token in tokens {
+            dbg!("run {:?}", token);
             result = token.eval(&mut self.state)?;
             if let Some(num) = result {
                 self.state.push(num);
@@ -336,15 +386,8 @@ impl Forth {
         let mut in_user_defined = false;
 
         for item in input {
-            if in_user_defined == false && !user_defined.is_empty() {
-                return Err(ForthError::InvalidWord(item.value.clone()));
-            }
             let token = if let Ok(value) = item.value.parse() {
                 Token::Number(value)
-            } else if let Ok(operator) = ForthOperator::try_from(item.value.as_ref()) {
-                Token::Operator(operator)
-            } else if let Ok(builtin) = ForthBuiltin::try_from(item.value.as_ref()) {
-                Token::Builtin(builtin)
             } else if item.value == ":" {
                 //println!("Start custom");
                 in_user_defined = true;
@@ -364,7 +407,11 @@ impl Forth {
             }
         }
 
-        Ok(tokens)
+        if in_user_defined {
+            Err(ForthError::Unterminated)
+        } else {
+            Ok(tokens)
+        }
     }
 }
 
@@ -375,33 +422,34 @@ mod test {
     #[test]
     fn cannot_parse_letter() {
         let mut forth = Forth::new();
-        let result = forth.eval("1 a 3 4 5");
-        assert_eq!(Err(ForthError::UnknownWord("a".to_string())), result);
+        assert_eq!(
+            forth.eval("1 a 3 4 5"),
+            Err(ForthError::UnknownWord("a".to_string()))
+        );
     }
 
     #[test]
     fn parses_numbers() {
         let mut forth = Forth::new();
-        let result = forth.eval("1 2.3 0.3 4 5");
-        assert_eq!(Ok(Some(())), result);
+        assert_eq!(forth.eval("1 2.3 0.3 4 5"), Ok(Some(())));
     }
 
     #[test]
     fn parses_math_expressions() {
-        let mut forth = Forth::new();
+        let forth = Forth::new();
         let lexemes = forth.lex("1 2.3 + 0.3 * 4 / 5 -").unwrap();
         let result = forth.tokenize(&lexemes);
         assert_eq!(
             Ok(vec![
                 Token::Number(1.0),
                 Token::Number(2.3),
-                Token::Operator(ForthOperator::Add),
+                Token::Word("+".to_string()),
                 Token::Number(0.3),
-                Token::Operator(ForthOperator::Multiply),
+                Token::Word("*".to_string()),
                 Token::Number(4.0),
-                Token::Operator(ForthOperator::Divide),
+                Token::Word("/".to_string()),
                 Token::Number(5.0),
-                Token::Operator(ForthOperator::Subtract)
+                Token::Word("-".to_string()),
             ]),
             result
         );
@@ -414,5 +462,250 @@ mod test {
         let tokens = forth.tokenize(&lexemes).unwrap();
         let result = forth.run(&tokens).unwrap();
         assert_eq!(Some(11.0), result);
+    }
+
+    #[test]
+    fn dup() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 dup"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 1.0],);
+    }
+
+    #[test]
+    fn dup_top_value_only() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 dup"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 2.0, 2.0]);
+    }
+
+    #[test]
+    fn dup_case_insensitive() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 DUP Dup dup"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn dup_error() {
+        let mut f = Forth::new();
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("dup"));
+    }
+
+    #[test]
+    fn drop() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 drop"), Ok(Some(())));
+        assert_eq!(Vec::<f64>::new(), f.stack());
+    }
+
+    #[test]
+    fn drop_with_two() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 drop"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0]);
+    }
+
+    #[test]
+    fn drop_case_insensitive() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 3 4 DROP Drop drop"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0]);
+    }
+
+    #[test]
+    fn drop_error() {
+        let mut f = Forth::new();
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("drop"));
+    }
+
+    #[test]
+    fn swap() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 swap"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![2.0, 1.0]);
+    }
+
+    #[test]
+    fn swap_with_three() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 3 swap"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 3.0, 2.0]);
+    }
+
+    #[test]
+    fn swap_case_insensitive() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 SWAP 3 Swap 4 swap"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![2.0, 3.0, 4.0, 1.0]);
+    }
+
+    #[test]
+    fn swap_error() {
+        let mut f = Forth::new();
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("1 swap"));
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("swap"));
+    }
+
+    #[test]
+    fn over() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 over"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 2.0, 1.0]);
+    }
+
+    #[test]
+    fn over_with_three() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 3 over"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 2.0, 3.0, 2.0]);
+    }
+
+    #[test]
+    fn over_case_insensitive() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 OVER Over over"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 2.0, 1.0, 2.0, 1.0]);
+    }
+
+    #[test]
+    fn over_error() {
+        let mut f = Forth::new();
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("1 over"));
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("over"));
+    }
+
+    // User-defined words
+
+    #[test]
+    fn can_consist_of_built_in_words() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": dup-twice dup dup ;"), Ok(Some(())));
+        assert_eq!(f.eval("1 dup-twice"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn execute_in_the_right_order() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": countup 1 2 3 ;"), Ok(Some(())));
+        assert_eq!(f.eval("countup"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn redefining_an_existing_word() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": foo dup ;"), Ok(Some(())));
+        assert_eq!(f.eval(": foo dup dup ;"), Ok(Some(())));
+        assert_eq!(f.eval("1 foo"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn redefining_an_existing_built_in_word() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": swap dup ;"), Ok(Some(())));
+        assert_eq!(f.eval("1 swap"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 1.0]);
+    }
+
+    #[test]
+    fn user_defined_words_are_case_insensitive() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": foo dup ;"), Ok(Some(())));
+        assert_eq!(f.eval("1 FOO Foo foo"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn definitions_are_case_insensitive() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": SWAP DUP Dup dup ;"), Ok(Some(())));
+        assert_eq!(f.eval("1 swap"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn redefining_a_built_in_operator() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": + * ;"), Ok(Some(())));
+        assert_eq!(f.eval("3 4 +"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![12.0]);
+    }
+
+    #[test]
+    fn can_define_variable() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": foo 5 ;"), Ok(Some(())));
+        assert_eq!(f.eval("foo"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![5.0]);
+    }
+
+    #[test]
+    fn can_use_different_words_with_the_same_name() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": foo 5 ;"), Ok(Some(())));
+        assert_eq!(f.eval(": bar foo ;"), Ok(Some(())));
+        assert_eq!(f.eval(": foo 6 ;"), Ok(Some(())));
+        assert_eq!(f.eval("bar foo"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![5.0, 6.0]);
+    }
+
+    #[test]
+    fn can_define_word_that_uses_word_with_the_same_name() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": foo 10 ;"), Ok(Some(())));
+        assert_eq!(f.eval(": foo foo 1 + ;"), Ok(Some(())));
+        assert_eq!(f.eval("foo"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![11.0]);
+    }
+
+    #[test]
+    fn defining_a_number() {
+        let mut f = Forth::new();
+        let result = f.eval(": 1 2 ;");
+        assert!(matches!(result, Err(ForthError::InvalidWord(_))));
+    }
+
+    #[test]
+    fn malformed_word_definition() {
+        let mut f = Forth::new();
+        assert_eq!(Err(ForthError::Unterminated), f.eval(":"));
+        assert_eq!(Err(ForthError::Unterminated), f.eval(": foo"));
+        assert_eq!(Err(ForthError::Unterminated), f.eval(": foo 1"));
+    }
+
+    #[test]
+    fn calling_non_existing_word() {
+        let mut f = Forth::new();
+        assert_eq!(
+            Err(ForthError::UnknownWord("foo".to_string())),
+            f.eval("1 foo")
+        );
+    }
+
+    #[test]
+    fn multiple_definitions() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": one 1 ; : two 2 ; one two +"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![3.0]);
+    }
+
+    #[test]
+    fn definitions_after_ops() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 + : addone 1 + ; addone"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![4.0]);
+    }
+
+    #[test]
+    fn redefine_an_existing_word_with_another_existing_word() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval(": foo 5 ;"), Ok(Some(())));
+        assert_eq!(f.eval(": bar foo ;"), Ok(Some(())));
+        assert_eq!(f.eval(": foo 6 ;"), Ok(Some(())));
+        assert_eq!(f.eval(": bar foo ;"), Ok(Some(())));
+        assert_eq!(f.eval("bar foo"), Ok(Some(())));
+        assert_eq!(f.stack(), vec![6.0, 6.0]);
     }
 }
