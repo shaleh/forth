@@ -45,51 +45,29 @@ impl Token {
             Token::Number(num) => Some(*num),
             Token::Operator(operator) => operator.eval(state)?,
             Token::Builtin(builtin) => builtin.eval(state)?,
-            Token::Word(word) => match state.lookup(word) {
-                Some(Token::Number(value)) => Some(value),
-                Some(Token::Definition(user_defined_tokens)) => {
-                    dbg!(&user_defined_tokens);
-                    self.eval_definition(state, &user_defined_tokens)?
-                }
-                Some(stored_token) => {
-                    dbg!("Stored token: {:?}", &stored_token);
-                    return Err(ForthError::InvalidWord(format!("{:?}", stored_token)));
-                }
-                None => {
-                    let parsed = self.parse_word(word.as_ref())?;
-                    parsed.eval(state)?
-                }
-            },
+            Token::Word(word) => self.eval_word(state, word)?,
             Token::UserDefined(user_defined_tokens) => {
-                dbg!(&user_defined_tokens);
-                match user_defined_tokens.as_slice() {
-                    [Token::Word(name), rest @ ..] => match rest
-                        .iter()
-                        .map(|token| self.lookup_definition(state, token.clone()))
-                        .collect()
-                    {
-                        Ok(collected_tokens) => {
-                            state.define_word(name.clone(), Token::Definition(collected_tokens));
-                            None
-                        }
-                        Err(err) => {
-                            return Err(err);
-                        }
-                    },
-                    _ => {
-                        dbg!("User definition: {:?}", &user_defined_tokens);
-                        return Err(ForthError::InvalidWord(format!(
-                            "{:?}",
-                            user_defined_tokens
-                        )));
-                    }
-                }
+                self.eval_user_defined(state, user_defined_tokens)?
             }
             Token::Definition(user_defined_tokens) => {
                 self.eval_definition(state, user_defined_tokens)?
             }
         };
         Ok(result)
+    }
+
+    fn eval_word(&self, state: &mut State, word: &str) -> Result<Option<f64>, ForthError> {
+        match state.lookup(word) {
+            Some(Token::Number(value)) => Ok(Some(value)),
+            Some(Token::Definition(user_defined_tokens)) => {
+                self.eval_definition(state, user_defined_tokens.as_slice())
+            }
+            Some(stored_token) => Err(ForthError::InvalidWord(format!("{:?}", stored_token))),
+            None => {
+                let parsed = self.parse_word(word.as_ref())?;
+                parsed.eval(state)
+            }
+        }
     }
 
     fn parse_word(&self, word: &str) -> Result<Token, ForthError> {
@@ -119,12 +97,32 @@ impl Token {
         tokens: &[Token],
     ) -> Result<Option<f64>, ForthError> {
         for token in tokens {
-            dbg!("Eval definition {:?}", &token);
             if let Some(value) = token.eval(state)? {
                 state.push(value);
             }
         }
         Ok(None)
+    }
+
+    fn eval_user_defined(
+        &self,
+        state: &mut State,
+        tokens: &[Token],
+    ) -> Result<Option<f64>, ForthError> {
+        match tokens {
+            [Token::Word(name), rest @ ..] => match rest
+                .iter()
+                .map(|token| self.lookup_definition(state, token.clone()))
+                .collect()
+            {
+                Ok(collected_tokens) => {
+                    state.define_word(name.clone(), Token::Definition(collected_tokens));
+                    Ok(None)
+                }
+                Err(err) => Err(err),
+            },
+            _ => Err(ForthError::InvalidWord(format!("{:?}", tokens))),
+        }
     }
 }
 
@@ -255,9 +253,7 @@ impl TryFrom<&str> for ForthBuiltin {
             "spaces" => ForthBuiltin::Spaces,
             "swap" => ForthBuiltin::Swap,
             "." | "take" => ForthBuiltin::Take,
-            //"toggle-debug" => ForthBuiltin::ToggleDebug,
             _ => {
-                dbg!("parse builtin {:?}", input);
                 return Err(ForthError::UnknownWord(input.into()));
             }
         };
@@ -284,7 +280,7 @@ impl State {
     }
 
     fn lookup(&self, word: &str) -> Option<Token> {
-        self.dictionary.get(word).map(|token| token.clone())
+        self.dictionary.get(word).cloned()
     }
 
     fn top(&self) -> Result<f64, ForthError> {
@@ -331,6 +327,7 @@ impl Forth {
         }
     }
 
+    #[cfg(test)]
     pub fn stack(&self) -> &[f64] {
         &self.state.stack
     }
@@ -341,11 +338,8 @@ impl Forth {
             Ok(Some(()))
         } else {
             let lexemes = self.lex(&line)?;
-            //println!("{:?} Ok", lexemes);
             let tokens = self.tokenize(&lexemes)?;
-            //println!("{:?} Ok", tokens);
             let _result = self.run(&tokens)?;
-            //println!("{:?} Ok", _result);
             if self.keep_running {
                 Ok(Some(()))
             } else {
@@ -358,13 +352,10 @@ impl Forth {
         let mut result = None;
 
         for token in tokens {
-            dbg!("run {:?}", token);
             result = token.eval(&mut self.state)?;
             if let Some(num) = result {
                 self.state.push(num);
             }
-
-            //self.state.show_stack();
         }
 
         Ok(result)
@@ -389,18 +380,15 @@ impl Forth {
             let token = if let Ok(value) = item.value.parse() {
                 Token::Number(value)
             } else if item.value == ":" {
-                //println!("Start custom");
                 in_user_defined = true;
                 continue;
             } else if item.value == ";" {
                 in_user_defined = false;
-                //println!("Custom {:?}", user_defined);
                 Token::UserDefined(user_defined.clone())
             } else {
                 Token::Word(item.value.clone())
             };
             if in_user_defined {
-                //println!("Pushing {:?}", token);
                 user_defined.push(token);
             } else {
                 tokens.push(token);
