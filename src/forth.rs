@@ -405,6 +405,9 @@ impl Forth {
             } else {
                 tokens.push(token);
             }
+            if !in_user_defined && !user_defined.is_empty() {
+                user_defined.clear();
+            }
         }
 
         if in_user_defined {
