@@ -183,6 +183,7 @@ impl TryFrom<&str> for ForthOperator {
 enum ForthBuiltin {
     Bye,
     CR,
+    Display,
     Drop,
     Dup,
     Emit,
@@ -191,7 +192,6 @@ enum ForthBuiltin {
     Show,
     Spaces,
     Swap,
-    Take,
 }
 
 impl ForthBuiltin {
@@ -202,6 +202,11 @@ impl ForthBuiltin {
             }
             Self::CR => {
                 println!();
+            }
+            Self::Display => {
+                // (n1 -- )
+                let value = state.pop()?;
+                print!("{}", value);
             }
             Self::Drop => {
                 // (n1 -- )
@@ -252,11 +257,6 @@ impl ForthBuiltin {
                 state.push(n2);
                 state.push(n1);
             }
-            Self::Take => {
-                // (n1 -- )
-                let value = state.pop()?;
-                print!("{}", value);
-            }
         }
 
         Ok(None)
@@ -268,6 +268,7 @@ impl TryFrom<&str> for ForthBuiltin {
 
     fn try_from(input: &str) -> Result<ForthBuiltin, Self::Error> {
         let builtin = match input {
+            "." => ForthBuiltin::Display,
             "bye" | "quit" => ForthBuiltin::Bye,
             "cr" => ForthBuiltin::CR,
             "dup" => ForthBuiltin::Dup,
@@ -278,7 +279,6 @@ impl TryFrom<&str> for ForthBuiltin {
             ".s" => ForthBuiltin::Show,
             "spaces" => ForthBuiltin::Spaces,
             "swap" => ForthBuiltin::Swap,
-            "." | "take" => ForthBuiltin::Take,
             _ => {
                 return Err(ForthError::UnknownWord(input.into()));
             }

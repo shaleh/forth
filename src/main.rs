@@ -25,7 +25,7 @@ fn main() {
                         println!("{} Ok", value);
                     }
                     None => {
-                        println!("Ok");
+                        println!(" Ok");
                     }
                 },
                 Err(ForthError::UserQuit) => {
