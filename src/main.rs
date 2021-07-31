@@ -32,7 +32,7 @@ fn main() {
                     break;
                 }
                 Err(msg) => {
-                    println!("Error: {}", msg);
+                    println!("? Error: {}", msg);
                 }
             },
             Err(msg) => {
