@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use std::{collections::HashMap, convert::TryFrom, iter};
 
 #[derive(thiserror::Error, Debug, PartialEq)]
@@ -335,7 +336,11 @@ impl State {
     }
 
     fn show_stack(&self) {
-        println!("{:?}", self.stack);
+        print!("<{}> ", self.stack.len());
+        for item in &self.stack {
+            print!("{} ", item);
+        }
+        io::stdout().flush().unwrap();
     }
 }
 
