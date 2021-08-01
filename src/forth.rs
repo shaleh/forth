@@ -134,15 +134,19 @@ enum ForthBuiltin {
     Display,
     Drop,
     Dup,
+    TwoDrop,
+    TwoDup,
     Emit,
     Mod,
     SlashMod,
     Over,
+    TwoOver,
     Rot,
     Show,
     Space,
     Spaces,
     Swap,
+    TwoSwap,
 }
 
 impl ForthBuiltin {
@@ -200,13 +204,27 @@ impl ForthBuiltin {
                 print!("{}", value);
             }
             Self::Drop => {
-                // (n1 -- )
+                // (n1 n2 -- n1)
                 state.pop()?;
             }
+            Self::TwoDrop => {
+                // (d1 d2 -- d1)
+                // IOW (n1 n2 n3 n4 -- n1 n2)
+                state.pop2()?;
+            }
             Self::Dup => {
-                // (n1 -- n1 n1)
-                let value = state.top()?;
-                state.push(value);
+                // (n -- n n)
+                let n = state.top()?;
+                state.push(n);
+            }
+            Self::TwoDup => {
+                // (d -- d d)
+                // IOW (n1 n2 -- n1 n2 n1 n2)
+                let (n2, n1) = state.pop2()?;
+                state.push(n1);
+                state.push(n2);
+                state.push(n1);
+                state.push(n2);
             }
             Self::Emit => {
                 // (n1 -- )
@@ -219,6 +237,18 @@ impl ForthBuiltin {
                 state.push(num1);
                 state.push(num2);
                 state.push(num1);
+            }
+            Self::TwoOver => {
+                // (d1 d2 -- d1 d2 d1)
+                // IOW (n1 n2 n3 n4 -- n1 n2 n3 n4 n1 n2)
+                let (num4, num3) = state.pop2()?;
+                let (num2, num1) = state.pop2()?;
+                state.push(num1);
+                state.push(num2);
+                state.push(num3);
+                state.push(num4);
+                state.push(num1);
+                state.push(num2);
             }
             Self::Rot => {
                 // (n1 n2 n3 -- n2 n3 n1)
@@ -251,6 +281,16 @@ impl ForthBuiltin {
                 state.push(n2);
                 state.push(n1);
             }
+            Self::TwoSwap => {
+                // (d1 d2 -- d2 d1)
+                // IOW (n1 n2 n3 n4 -- n3 n4 n1 n2)
+                let (n4, n3) = state.pop2()?;
+                let (n2, n1) = state.pop2()?;
+                state.push(n3);
+                state.push(n4);
+                state.push(n1);
+                state.push(n2);
+            }
         }
 
         Ok(None)
@@ -270,16 +310,20 @@ impl TryFrom<&str> for ForthBuiltin {
             "bye" | "quit" => ForthBuiltin::Bye,
             "cr" => ForthBuiltin::CR,
             "dup" => ForthBuiltin::Dup,
+            "2dup" => ForthBuiltin::TwoDup,
             "drop" => ForthBuiltin::Drop,
+            "2drop" => ForthBuiltin::TwoDrop,
             "emit" => ForthBuiltin::Emit,
             "/mod" => ForthBuiltin::SlashMod,
             "mod" => ForthBuiltin::Mod,
             "over" => ForthBuiltin::Over,
+            "2over" => ForthBuiltin::TwoOver,
             "rot" => ForthBuiltin::Rot,
             ".s" => ForthBuiltin::Show,
             "space" => ForthBuiltin::Space,
             "spaces" => ForthBuiltin::Spaces,
             "swap" => ForthBuiltin::Swap,
+            "2swap" => ForthBuiltin::TwoSwap,
             _ => {
                 return Err(ForthError::UnknownWord(input.into()));
             }
@@ -511,6 +555,34 @@ mod test {
     }
 
     #[test]
+    fn two_dup() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 2dup"), Ok(None));
+        assert_eq!(f.stack(), vec![1.0, 2.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn two_dup_top_pair_only() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 3 2dup"), Ok(None));
+        assert_eq!(f.stack(), vec![1.0, 2.0, 3.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn two_dup_case_insensitive() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 2DUP 2Dup 2dup"), Ok(None));
+        assert_eq!(f.stack(), vec![1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn two_dup_error() {
+        let mut f = Forth::new();
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("2dup"));
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("1 2dup"));
+    }
+
+    #[test]
     fn rot() {
         let mut f = Forth::new();
         assert_eq!(f.eval("1 2 3 rot"), Ok(None));
@@ -586,6 +658,27 @@ mod test {
     }
 
     #[test]
+    fn two_swap() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 3 4 2swap"), Ok(None));
+        assert_eq!(f.stack(), vec![3.0, 4.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn two_swap_case_insensitive() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 3 4 2SWAP 2Swap 2swap"), Ok(None));
+        assert_eq!(f.stack(), vec![3.0, 4.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn two_swap_error() {
+        let mut f = Forth::new();
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("1 2swap"));
+        assert_eq!(Err(ForthError::StackUnderflow), f.eval("2swap"));
+    }
+
+    #[test]
     fn over() {
         let mut f = Forth::new();
         assert_eq!(f.eval("1 2 over"), Ok(None));
@@ -611,6 +704,31 @@ mod test {
         let mut f = Forth::new();
         assert_eq!(Err(ForthError::StackUnderflow), f.eval("1 over"));
         assert_eq!(Err(ForthError::StackUnderflow), f.eval("over"));
+    }
+
+    #[test]
+    fn two_over() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 3 4 2over"), Ok(None));
+        assert_eq!(f.stack(), vec![1.0, 2.0, 3.0, 4.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn two_over_case_insensitive() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2 3 4 2OVER 2Over 2over"), Ok(None));
+        assert_eq!(
+            f.stack(),
+            vec![1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0, 1.0, 2.0]
+        );
+    }
+
+    #[test]
+    fn two_over_error() {
+        let mut f = Forth::new();
+        assert_eq!(f.eval("1 2over"), Err(ForthError::StackUnderflow));
+        assert_eq!(f.eval("1 2 2over"), Err(ForthError::StackUnderflow));
+        assert_eq!(f.eval("1 2 3 2over"), Err(ForthError::StackUnderflow));
     }
 
     // User-defined words
