@@ -32,7 +32,6 @@ impl Lexeme {
 #[derive(Clone, Debug, PartialEq)]
 enum Token {
     Number(f64),
-    Operator(ForthOperator),
     Builtin(ForthBuiltin),
     Word(String),
     Definition(Vec<Token>),
@@ -43,7 +42,6 @@ impl Token {
     pub fn eval(&self, state: &mut State) -> Result<Option<f64>, ForthError> {
         let result = match self {
             Token::Number(num) => Some(*num),
-            Token::Operator(operator) => operator.eval(state)?,
             Token::Builtin(builtin) => builtin.eval(state)?,
             Token::Word(word) => self.eval_word(state, word)?,
             Token::UserDefined(user_defined_tokens) => {
@@ -73,8 +71,6 @@ impl Token {
     fn parse_word(&self, word: &str) -> Result<Token, ForthError> {
         if let Ok(builtin) = ForthBuiltin::try_from(word) {
             Ok(Token::Builtin(builtin))
-        } else if let Ok(operator) = ForthOperator::try_from(word) {
-            Ok(Token::Operator(operator))
         } else {
             Err(ForthError::UnknownWord(word.to_string()))
         }
@@ -127,69 +123,23 @@ impl Token {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum ForthOperator {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-}
-
-impl ForthOperator {
-    pub fn eval(&self, state: &mut State) -> Result<Option<f64>, ForthError> {
-        let result = match self {
-            // (n1 n2 -- sum)
-            Self::Add => {
-                let (n2, n1) = state.pop2()?;
-                n1 + n2
-            }
-            Self::Subtract => {
-                // (n1 n2 -- difference)
-                let (n2, n1) = state.pop2()?;
-                n1 - n2
-            }
-            Self::Multiply => {
-                // (n1 n2 -- result)
-                let (n2, n1) = state.pop2()?;
-                n1 * n2
-            }
-            Self::Divide => {
-                // (n1 n2 -- result)
-                let (n2, n1) = state.pop2()?;
-                if n2 == 0.0 {
-                    return Err(ForthError::DivisionByZero);
-                }
-                n1 / n2
-            }
-        };
-        Ok(Some(result))
-    }
-}
-
-impl TryFrom<&str> for ForthOperator {
-    type Error = ForthError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "+" => Ok(Self::Add),
-            "-" => Ok(Self::Subtract),
-            "*" => Ok(Self::Multiply),
-            "/" => Ok(Self::Divide),
-            v => Err(ForthError::UnknownWord(v.to_string())),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
 enum ForthBuiltin {
+    Add,      // +
+    Subtract, // -
+    Multiply, // *
+    Divide,   // /
     Bye,
     CR,
     Display,
     Drop,
     Dup,
     Emit,
+    Mod,
+    SlashMod,
     Over,
     Rot,
     Show,
+    Space,
     Spaces,
     Swap,
 }
@@ -197,6 +147,46 @@ enum ForthBuiltin {
 impl ForthBuiltin {
     pub fn eval(&self, state: &mut State) -> Result<Option<f64>, ForthError> {
         match self {
+            // (n1 n2 -- sum)
+            Self::Add => {
+                let (n2, n1) = state.pop2()?;
+                state.push(n1 + n2);
+            }
+            Self::Subtract => {
+                // (n1 n2 -- difference)
+                let (n2, n1) = state.pop2()?;
+                state.push(n1 - n2);
+            }
+            Self::Multiply => {
+                // (n1 n2 -- result)
+                let (n2, n1) = state.pop2()?;
+                state.push(n1 * n2);
+            }
+            Self::Divide => {
+                // (n1 n2 -- result)
+                let (n2, n1) = state.pop2()?;
+                if n2 == 0.0 {
+                    return Err(ForthError::DivisionByZero);
+                }
+                state.push(n1 / n2);
+            }
+            Self::Mod => {
+                // (n1 n2 -- rem)
+                let (n2, n1) = state.pop2()?;
+                if n2 == 0.0 {
+                    return Err(ForthError::DivisionByZero);
+                }
+                state.push(n1 % n2);
+            }
+            Self::SlashMod => {
+                // (n1 n2 -- rem quot)
+                let (n2, n1) = state.pop2()?;
+                if n2 == 0.0 {
+                    return Err(ForthError::DivisionByZero);
+                }
+                state.push(n1 % n2);
+                state.push(n1 / n2);
+            }
             Self::Bye => {
                 return Err(ForthError::UserQuit);
             }
@@ -240,6 +230,9 @@ impl ForthBuiltin {
             Self::Show => {
                 state.show_stack();
             }
+            Self::Space => {
+                print!(" ");
+            }
             Self::Spaces => {
                 // (n1 -- )
                 let num = state.pop()?;
@@ -269,14 +262,21 @@ impl TryFrom<&str> for ForthBuiltin {
     fn try_from(input: &str) -> Result<ForthBuiltin, Self::Error> {
         let builtin = match input {
             "." => ForthBuiltin::Display,
+            "+" => ForthBuiltin::Add,
+            "-" => ForthBuiltin::Subtract,
+            "*" => ForthBuiltin::Multiply,
+            "/" => ForthBuiltin::Divide,
             "bye" | "quit" => ForthBuiltin::Bye,
             "cr" => ForthBuiltin::CR,
             "dup" => ForthBuiltin::Dup,
             "drop" => ForthBuiltin::Drop,
             "emit" => ForthBuiltin::Emit,
+            "/mod" => ForthBuiltin::SlashMod,
+            "mod" => ForthBuiltin::Mod,
             "over" => ForthBuiltin::Over,
             "rot" => ForthBuiltin::Rot,
             ".s" => ForthBuiltin::Show,
+            "space" => ForthBuiltin::Space,
             "spaces" => ForthBuiltin::Spaces,
             "swap" => ForthBuiltin::Swap,
             _ => {
@@ -475,7 +475,7 @@ mod test {
         let lexemes = forth.lex("5 6 +").unwrap();
         let tokens = forth.tokenize(&lexemes).unwrap();
         let result = forth.run(&tokens).unwrap();
-        assert_eq!(Some(11.0), result);
+        assert_eq!(None, result);
     }
 
     #[test]
@@ -721,7 +721,7 @@ mod test {
     #[test]
     fn multiple_definitions() {
         let mut f = Forth::new();
-        assert_eq!(f.eval(": one 1 ; : two 2 ; one two +"), Ok(Some(3.0)));
+        assert_eq!(f.eval(": one 1 ; : two 2 ; one two +"), Ok(None));
         assert_eq!(f.stack(), vec![3.0]);
     }
 
