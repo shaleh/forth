@@ -18,19 +18,6 @@ pub enum ForthError {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct Lexeme {
-    value: String,
-}
-
-impl Lexeme {
-    fn new(value: &str) -> Self {
-        Lexeme {
-            value: value.to_string(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
 enum Token {
     Number(f64),
     Builtin(ForthBuiltin),
@@ -70,7 +57,7 @@ impl Token {
     }
 
     fn parse_word(&self, word: &str) -> Result<Token, ForthError> {
-        if let Ok(builtin) = ForthBuiltin::try_from(word) {
+        if let Ok(builtin) = ForthBuiltin::try_from(word.to_lowercase().as_ref()) {
             Ok(Token::Builtin(builtin))
         } else {
             Err(ForthError::UnknownWord(word.to_string()))
@@ -347,11 +334,11 @@ impl State {
     }
 
     fn define_word(&mut self, word: String, value: Token) {
-        self.dictionary.insert(word, value);
+        self.dictionary.insert(word.to_lowercase(), value);
     }
 
     fn lookup(&self, word: &str) -> Option<Token> {
-        self.dictionary.get(word).cloned()
+        self.dictionary.get(&word.to_lowercase()).cloned()
     }
 
     fn top(&self) -> Result<f64, ForthError> {
@@ -400,6 +387,10 @@ impl Forth {
         }
     }
 
+    pub fn prompt(&self) -> String {
+        "> ".to_string()
+    }
+
     #[cfg(test)]
     pub fn stack(&self) -> &[f64] {
         &self.state.stack
@@ -431,34 +422,29 @@ impl Forth {
         Ok(result)
     }
 
-    fn lex(&self, input: &str) -> Result<Vec<Lexeme>, ForthError> {
-        let mut lexemes = Vec::new();
-        for item in input.split(' ') {
-            lexemes.push(Lexeme::new(&item.to_lowercase()));
-        }
-
-        Ok(lexemes)
+    fn lex(&self, input: &str) -> Result<Vec<String>, ForthError> {
+        Ok(input.split(' ').map(|s| s.to_string()).collect())
     }
 
-    fn tokenize(&self, input: &[Lexeme]) -> Result<Vec<Token>, ForthError> {
+    fn tokenize(&self, input: &[String]) -> Result<Vec<Token>, ForthError> {
         let mut tokens = Vec::new();
 
         let mut user_defined = Vec::new();
         let mut in_user_defined = false;
 
         for item in input {
-            if item.value == ":" {
+            if item == ":" {
                 in_user_defined = true;
                 continue;
             }
 
-            let token = if let Ok(value) = item.value.parse() {
+            let token = if let Ok(value) = item.parse() {
                 Token::Number(value)
-            } else if item.value == ";" {
+            } else if item == ";" {
                 in_user_defined = false;
                 Token::UserDefined(user_defined.clone())
             } else {
-                Token::Word(item.value.clone())
+                Token::Word(item.clone())
             };
             if in_user_defined {
                 user_defined.push(token);

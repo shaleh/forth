@@ -12,10 +12,14 @@ fn main() {
     loop {
         let mut input = String::new();
 
-        print!("> ");
+        print!("{}", forth.prompt());
         io::stdout().flush().unwrap();
 
         match io::stdin().read_line(&mut input) {
+            Err(msg) => {
+                println!("Error: {}", msg);
+                break;
+            }
             Ok(0) => {
                 break;
             }
@@ -35,10 +39,6 @@ fn main() {
                     println!("? Error: {}", msg);
                 }
             },
-            Err(msg) => {
-                println!("Error: {}", msg);
-                break;
-            }
         }
     }
 }
