@@ -18,7 +18,7 @@ pub enum ForthError {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum Token {
+pub enum Token {
     Number(f64),
     Builtin(ForthBuiltin),
     Word(String),
@@ -36,7 +36,8 @@ impl Token {
                 self.eval_user_defined(state, user_defined_tokens)?
             }
             Token::Definition(user_defined_tokens) => {
-                self.eval_definition(state, user_defined_tokens)?
+                state.push_tokens(user_defined_tokens);
+                self.eval_definition(state)?
             }
         };
         Ok(result)
@@ -46,7 +47,10 @@ impl Token {
         match state.lookup(word) {
             Some(Token::Number(value)) => Ok(Some(value)),
             Some(Token::Definition(user_defined_tokens)) => {
-                self.eval_definition(state, user_defined_tokens.as_slice())
+                state.push_tokens(user_defined_tokens.as_slice());
+                let result = self.eval_definition(state);
+                state.pop_tokens();
+                result
             }
             Some(stored_token) => Err(ForthError::InvalidWord(format!("{:?}", stored_token))),
             None => {
@@ -64,23 +68,8 @@ impl Token {
         }
     }
 
-    fn lookup_definition(&self, state: &State, token: Token) -> Result<Token, ForthError> {
-        let definition = match token {
-            Token::Word(word) => match state.lookup(&word) {
-                Some(value) => value,
-                None => self.parse_word(word.as_ref())?,
-            },
-            _ => token,
-        };
-        Ok(definition)
-    }
-
-    fn eval_definition(
-        &self,
-        state: &mut State,
-        tokens: &[Token],
-    ) -> Result<Option<f64>, ForthError> {
-        for token in tokens {
+    fn eval_definition(&self, state: &mut State) -> Result<Option<f64>, ForthError> {
+        while let Some(token) = state.next_token() {
             if let Some(value) = token.eval(state)? {
                 state.push(value);
             }
@@ -94,24 +83,17 @@ impl Token {
         tokens: &[Token],
     ) -> Result<Option<f64>, ForthError> {
         match tokens {
-            [Token::Word(name), rest @ ..] => match rest
-                .iter()
-                .map(|token| self.lookup_definition(state, token.clone()))
-                .collect()
-            {
-                Ok(collected_tokens) => {
-                    state.define_word(name.clone(), Token::Definition(collected_tokens));
-                    Ok(None)
-                }
-                Err(err) => Err(err),
-            },
+            [Token::Word(name), rest @ ..] => {
+                state.define_word(name.clone(), Token::Definition(rest.to_vec()));
+                Ok(None)
+            }
             _ => Err(ForthError::InvalidWord(format!("{:?}", tokens))),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum ForthBuiltin {
+pub enum ForthBuiltin {
     Add,      // +
     Subtract, // -
     Multiply, // *
@@ -130,6 +112,7 @@ enum ForthBuiltin {
     TwoOver,
     Rot,
     Show,
+    ShowString,
     Space,
     Spaces,
     Swap,
@@ -248,6 +231,21 @@ impl ForthBuiltin {
             Self::Show => {
                 state.show_stack();
             }
+            Self::ShowString => {
+                while let Some(next) = state.next_token() {
+                    match next {
+                        Token::Word(word) if word == "\"" => {
+                            break;
+                        }
+                        Token::Word(word) => {
+                            print!("{} ", word);
+                        }
+                        _ => {
+                            return Err(ForthError::Unterminated);
+                        }
+                    }
+                }
+            }
             Self::Space => {
                 print!(" ");
             }
@@ -294,6 +292,7 @@ impl TryFrom<&str> for ForthBuiltin {
             "-" => ForthBuiltin::Subtract,
             "*" => ForthBuiltin::Multiply,
             "/" => ForthBuiltin::Divide,
+            ".\"" => ForthBuiltin::ShowString,
             "bye" | "quit" => ForthBuiltin::Bye,
             "cr" => ForthBuiltin::CR,
             "dup" => ForthBuiltin::Dup,
@@ -323,6 +322,8 @@ impl TryFrom<&str> for ForthBuiltin {
 pub struct State {
     dictionary: HashMap<String, Token>,
     stack: Vec<f64>,
+    positions: Vec<usize>,
+    tokens: Vec<Vec<Token>>,
 }
 
 impl State {
@@ -330,6 +331,34 @@ impl State {
         Self {
             dictionary: HashMap::new(),
             stack: Vec::new(),
+            positions: Vec::new(),
+            tokens: Vec::new(),
+        }
+    }
+
+    pub fn push_tokens(&mut self, tokens: &[Token]) {
+        self.tokens.push(tokens.to_vec());
+        self.positions.push(0);
+    }
+
+    pub fn pop_tokens(&mut self) {
+        self.tokens.pop();
+        self.positions.pop();
+    }
+
+    pub fn next_token(&mut self) -> Option<Token> {
+        match (self.tokens.last(), self.positions.last_mut()) {
+            (None, _) => None,
+            (_, None) => None,
+            (Some(tokens), Some(position)) => {
+                if *position < tokens.len() {
+                    let token = tokens[*position].clone();
+                    *position += 1;
+                    Some(token)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -387,6 +416,10 @@ impl Forth {
         }
     }
 
+    pub fn next_token(&mut self) -> Option<Token> {
+        self.state.next_token()
+    }
+
     pub fn prompt(&self) -> String {
         "> ".to_string()
     }
@@ -412,7 +445,9 @@ impl Forth {
     fn run(&mut self, tokens: &[Token]) -> Result<Option<f64>, ForthError> {
         let mut result = None;
 
-        for token in tokens {
+        self.state.push_tokens(tokens);
+
+        while let Some(token) = self.next_token() {
             result = token.eval(&mut self.state)?;
             if let Some(num) = result {
                 self.state.push(num);
